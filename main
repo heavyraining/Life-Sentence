@@ -18,6 +18,7 @@ local SettingsTab = Window:NewTab("UI Settings")
 
 -- sections --
 local PlayersSection = PlayersTab:NewSection("Players")
+local PlayersAimlockSection = PlayersTab:NewSection("Aimlock")
 
 local ResourcesSection = CraftingTab:NewSection("Resource ESP")
 local ResourceFarmSection = CraftingTab:NewSection("Resource Farming")
@@ -33,7 +34,31 @@ local selectedPlayer = nil
 local resourceEsp = false
 local resourceSafeMode = true
 
+local aimlockTargets = {}
+
 -- functions --
+local function findIndex(tbl, value)
+	for i, v in ipairs(tbl) do
+		if v == value then
+			return i
+		end
+	end
+	return nil
+end
+
+local function separateTable(tbl)
+	local str = ""
+	for i, v in ipairs(tbl) do
+		str = str .. v.Name
+		if i < #tbl then
+			str = str .. ", "
+		end
+	end
+	
+	return str
+end
+
+
 local function notify(title, text, duration, button1, button2)
 	if button1 then
 		if not button2 then
@@ -74,9 +99,43 @@ local function refreshPlayerDropdown(dropdown)
 	dropdown:Refresh(receivedPlayers)
 end
 
-local playerSelectionDropdown = PlayersSection:NewDropdown("Select Player", "DropdownInf", nil, function(currentOption)
+local playerSelectionDropdown = PlayersSection:NewDropdown("Select Player", "Selects a player for anything in the script", nil, function(currentOption)
 	selectedPlayer = game:GetService("Players"):FindFirstChild(currentOption)
 	notify("Selected Player", currentOption.." has been selected", 3, "Okay...")
+end)
+
+PlayersAimlockSection:NewButton("Target Selected Player", "Targets selected player with aimlock", function()
+	if selectedPlayer then
+		if not table.find(aimlockTargets, selectedPlayer) then
+			table.insert(aimlockTargets, selectedPlayer)
+			notify("Targeting Player", selectedPlayer.Name.." is now being targeted", 3, "Thanks I guess?..")
+		else
+			notify("Already Targeting", selectedPlayer.Name.." is already being targeted.", 3, "Okay...")
+		end
+	else
+		notify("No Selected Player", "You haven't selected a player to target yet.", 3, "Okay...")
+	end
+end)
+
+PlayersAimlockSection:NewButton("Untarget Selected Player", "Removes selected player from list of aimlocking targets", function()
+	if selectedPlayer then
+		if table.find(aimlockTargets, selectedPlayer) then
+			table.remove(aimlockTargets, findIndex(aimlockTargets, selectedPlayer))
+			notify("Player Removed", selectedPlayer.Name.." is no longer being targeted", 3, "Thanks I guess?..")
+		else
+			notify("Not Targeted", selectedPlayer.Name.." isn't being targeted.", 3, "Okay...")
+		end
+	else
+		notify("No Selected Player", "You haven't selected a player to untarget yet.", 3, "Okay...")
+	end
+end)
+
+PlayersAimlockSection:NewButton("Get Targeted Players", "Notifies you of all players targeted", function()
+	if #aimlockTargets > 0 then
+		notify("Targeted Players", separateTable(aimlockTargets), 10, "Close")
+	else
+		notify("Targeted Players", "No one is being targeted at the moment...", 3, "Close")
+	end
 end)
 
 refreshPlayerDropdown(playerSelectionDropdown)
@@ -90,6 +149,78 @@ game:GetService("Players").PlayerRemoving:Connect(function(playerInQuestion)
 		selectedPlayer = nil
 	end
 	refreshPlayerDropdown(playerSelectionDropdown)
+end)
+
+PlayersAimlockSection:NewToggle("Aimlock", "Toggles aimlocking", function(state)
+	if state then
+		if not aimlockConnection then
+			local Players = game:GetService("Players")
+			local LocalPlayer = Players.LocalPlayer
+			local RunService = game:GetService("RunService")
+			local UserInputService = game:GetService("UserInputService")
+
+			local function getNearestPlayer()
+				local nearestPlayer = nil
+				local shortestDistance = math.huge
+
+				local playersRole = LocalPlayer.Backpack:FindFirstChild("Handcuffs") and "cop" or "prisoner"
+
+				for _, unfilteredPlayer in ipairs(Players:GetPlayers()) do
+					local enemiesRole = unfilteredPlayer.Backpack:FindFirstChild("Handcuffs") and "cop" or "prisoner"
+					local head = unfilteredPlayer.Character and unfilteredPlayer.Character:FindFirstChild("Head")
+					if head then
+						local distance = (head.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+						local origin = LocalPlayer.Character.HumanoidRootPart.Position
+						local direction = (head.Position - origin).Unit * distance
+						local raycastParams = RaycastParams.new()
+						raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, unfilteredPlayer.Character}
+						raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+						local raycastResult = workspace:Raycast(origin, direction, raycastParams)
+
+						local isBehindWall = raycastResult ~= nil
+						local notDowned = not unfilteredPlayer.Backpack.Stats.Downed.Value
+
+						if table.find(aimlockTargets, unfilteredPlayer) and not isBehindWall and notDowned and enemiesRole ~= playersRole then
+							if distance < shortestDistance then
+								shortestDistance = distance
+								nearestPlayer = unfilteredPlayer
+							end
+						end
+					end
+				end
+
+				return nearestPlayer
+			end
+
+			local function lookAtNearestPlayerHead()
+				local nearestPlayer = getNearestPlayer()
+				if nearestPlayer and nearestPlayer.Character then
+					local part = nearestPlayer.Character:FindFirstChild("Head")
+					if part then
+						workspace.CurrentCamera.CFrame = CFrame.lookAt(LocalPlayer.Character.Head.Position, Vector3.new(part.Position.X, LocalPlayer.Character.HumanoidRootPart.Position.Y, part.Position.Z))
+					end
+				end
+			end
+
+			aimlockConnection = RunService.RenderStepped:Connect(lookAtNearestPlayerHead)
+			RunService:BindToRenderStep("MouseLock", Enum.RenderPriority.Last.Value + 1, function()
+				UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+			end)
+
+			notify("Aimlock Toggled", "Now locking onto players", 2, "Thanks?..")
+		else
+			notify("Aimlock Already On", "Aimlock is already on", 2, "Okay...")
+		end
+	else
+		if aimlockConnection then
+			aimlockConnection:Disconnect()
+			aimlockConnection = nil
+			game:GetService("RunService"):UnbindFromRenderStep("MouseLock")
+			notify("Aimlock Toggled", "No longer locking onto players", 2, "Thanks?..")
+		else
+			notify("Aimlock Already Off", "Aimlock isn't even on yet", 2, "Okay...")
+		end
+	end
 end)
 
 local function findLootSpawns()
@@ -163,7 +294,7 @@ PlayersSection:NewDropdown("Teleport", "Teleports to specified locations", {"Saf
 	local function teleport(cframe:CFrame)
 		game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame = cframe
 	end
-	
+
 	if currentOption == "Safezone 1" then
 		teleport(CFrame.new(989.334595, -36.9323578, 113.808022, -0.516784668, -1.02094888e-09, 0.856115401, -1.29890843e-09, 1, 4.08464734e-10, -0.856115401, -9.00927222e-10, -0.516784668))
 	end
