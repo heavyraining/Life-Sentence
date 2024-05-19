@@ -291,7 +291,7 @@ ResourceFarmSection:NewToggle("Disable Safemode", "Highlights all resources on t
 end)
 
 PlayersSection:NewDropdown("Teleport", "Teleports to specified locations", {"Safezone 1", "Safezone 2", "Sewers", "Labour Hall"}, function(currentOption)
-	local function teleport(cframe:CFrame)
+	local function teleport(cframe)
 		game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame = cframe
 	end
 
